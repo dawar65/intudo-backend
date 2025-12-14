@@ -6,6 +6,8 @@
  */
 
 import dotenv from "dotenv";
+import path from "path";
+
 dotenv.config();
 
 /* =====================
@@ -32,7 +34,10 @@ export const config = {
   audio: {
     minSize: 1500,               // bytes (critical for Whisper)
     maxSize: 10 * 1024 * 1024    // 10 MB
-  }
+  },
+
+  // ✅ REQUIRED for Whisper temp files (Railway-safe)
+  tempDir: path.join(process.cwd(), "tmp")
 };
 
 /* =====================
