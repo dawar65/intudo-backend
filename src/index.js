@@ -4,8 +4,6 @@
  */
 
 import express from "express";
-import cors from "cors";
-
 import { config, validateConfig } from "./config.js";
 import { interpretRouter } from "./routes/interpret.js";
 import { errorHandler } from "./middleware/error.js";
@@ -26,19 +24,33 @@ try {
 ===================== */
 const app = express();
 
-app.use(
-  cors({
-    origin: [
-      "https://chatgpt.com",
-      "https://www.chatgpt.com",
-      "chrome-extension://*"
-    ],
-    methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type"],
-    credentials: false
-  })
-);
-app.options("*", cors());
+/* =====================
+   HARD CORS FIX (DO NOT CHANGE)
+===================== */
+const ALLOWED_ORIGINS = [
+  "https://chatgpt.com",
+  "https://www.chatgpt.com"
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
+
+  // Preflight MUST exit early
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
+  }
+
+  next();
+});
+
 app.use(express.json());
 
 /* =====================
@@ -64,7 +76,9 @@ app.use("/v0", interpretRouter);
 ===================== */
 app.use(errorHandler);
 
-// 404 fallback (must be last)
+/* =====================
+   404 Fallback
+===================== */
 app.use((req, res) => {
   res.status(404).json({
     error: "Not Found",
