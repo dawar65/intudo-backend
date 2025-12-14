@@ -1,50 +1,67 @@
+/**
+ * Intudo Backend - LLM Intent Interpreter
+ *
+ * Responsibilities:
+ * - Send transcript to LLM with Intudo IP prompt
+ * - Parse + validate structured intent output
+ * - Never throw uncaught errors
+ */
+
 import OpenAI from "openai";
 import { config } from "../config.js";
+import { getIntentPrompt } from "../prompts/intentprompt.js";
+import { extractJSON, validateInterpretation } from "../utils/validate.js";
 
+/* =====================
+   OpenAI Client
+===================== */
 const openai = new OpenAI({
   apiKey: config.openai.apiKey
 });
 
-export async function interpretIntent(transcript, { platform }) {
-  const system = `
-You are Intudo.
-You convert spoken intent into clean prompts.
+/* =====================
+   Interpret Intent
+===================== */
+export async function interpretIntent(transcript, { platform } = {}) {
+  try {
+    const systemPrompt = getIntentPrompt();
 
-Rules:
-- Do NOT invent formats
-- Do NOT assume email unless said
-- Stay close to meaning
-- Expand only if needed
-Return JSON only.
-`;
-
-  const user = `
+    const userPrompt = `
 Transcript:
 "${transcript}"
 
-Platform: ${platform}
+Platform: ${platform || "unknown"}
 
-Return:
-{
-  "cleaned_intent": "...",
-  "final_prompt": "...",
-  "intent_type": "exploration | generation | clarification",
-  "confidence": 0.0
-}
+Respond with JSON only.
 `;
 
-  const res = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.3,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user }
-    ]
-  });
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ]
+    });
 
-  try {
-    return JSON.parse(res.choices[0].message.content);
-  } catch {
+    const raw = response.choices?.[0]?.message?.content;
+
+    if (!raw) {
+      throw new Error("Empty LLM response");
+    }
+
+    /* ---------- Parse JSON safely ---------- */
+    const parsed = extractJSON(raw);
+
+    /* ---------- Validate + normalize ---------- */
+    const validated = validateInterpretation(parsed);
+
+    return validated;
+
+  } catch (err) {
+    console.error("[LLM] Interpretation error:", err.message);
+
+    // HARD fallback — never throw upstream
     return {
       cleaned_intent: transcript,
       final_prompt: transcript,
