@@ -9,7 +9,7 @@ import { config } from '../config.js';
 
 // Initialize OpenAI client
 const openai = new OpenAI({
-  apiKey: config.openai.apiKey,
+  apiKey: process.env.OPENAI_API_KEY
 });
 
 /**
