@@ -1,77 +1,55 @@
-/**
- * Intudo Backend - LLM Service
- * Uses GPT-4o-mini for intent interpretation
- */
+import OpenAI from "openai";
+import { config } from "../config.js";
 
-import OpenAI from 'openai';
-import { config } from '../config.js';
-import { getIntentPrompt } from '../prompts/intentPrompt.js';
-import { extractJSON, validateInterpretation } from '../utils/validate.js';
-
-// Initialize OpenAI client
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: config.openai.apiKey
 });
 
-/**
- * Interpret user intent from transcript and generate improved prompt
- * 
- * @param {string} transcript - Raw speech transcript
- * @param {object} context - Additional context (platform, etc.)
- * @returns {Promise<object>} - Interpretation result
- */
-export async function interpretIntent(transcript, context = {}) {
+export async function interpretIntent(transcript, { platform }) {
+  const system = `
+You are Intudo.
+You convert spoken intent into clean prompts.
+
+Rules:
+- Do NOT invent formats
+- Do NOT assume email unless said
+- Stay close to meaning
+- Expand only if needed
+Return JSON only.
+`;
+
+  const user = `
+Transcript:
+"${transcript}"
+
+Platform: ${platform}
+
+Return:
+{
+  "cleaned_intent": "...",
+  "final_prompt": "...",
+  "intent_type": "exploration | generation | clarification",
+  "confidence": 0.0
+}
+`;
+
+  const res = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0.3,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ]
+  });
+
   try {
-    // Get system prompt with examples
-    const systemPrompt = getIntentPrompt();
-
-    // Build user message
-    const userMessage = buildUserMessage(transcript, context);
-
-    // Call GPT-4o-mini
-    const response = await openai.chat.completions.create({
-      model: config.openai.llmModel,
-      temperature: config.openai.temperature,
-      max_tokens: config.openai.maxTokens,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-    });
-
-    // Extract response content
-    const content = response.choices[0]?.message?.content || '';
-
-    // Parse JSON from response (handles markdown wrapping, etc.)
-    const parsed = extractJSON(content);
-
-    // Validate and fill defaults
-    const validated = validateInterpretation(parsed);
-
-    return validated;
-
-  } catch (error) {
-    console.error('[LLM] Interpretation error:', error.message);
-
-    // Return safe fallback
+    return JSON.parse(res.choices[0].message.content);
+  } catch {
     return {
-      cleaned_intent: 'Unable to interpret the request',
-      final_prompt: transcript, // Fall back to raw transcript
-      intent_type: 'clarification',
-      confidence: 0.3,
+      cleaned_intent: transcript,
+      final_prompt: transcript,
+      intent_type: "clarification",
+      confidence: 0.3
     };
   }
-}
-
-/**
- * Build the user message for the LLM
- */
-function buildUserMessage(transcript, context) {
-  let message = `Transcript: "${transcript}"`;
-
-  if (context.platform) {
-    message += `\nPlatform: ${context.platform}`;
-  }
-
-  return message;
 }
