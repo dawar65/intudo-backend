@@ -26,7 +26,19 @@ try {
 ===================== */
 const app = express();
 
-app.use(cors(config.cors));
+app.use(
+  cors({
+    origin: [
+      "https://chatgpt.com",
+      "https://www.chatgpt.com",
+      "chrome-extension://*"
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+    credentials: false
+  })
+);
+
 app.use(express.json());
 
 /* =====================
