@@ -1,3 +1,14 @@
+/**
+ * Intudo Backend - Interpret Route
+ * POST /v0/interpret
+ *
+ * Handles:
+ * - Audio upload
+ * - Whisper transcription
+ * - Intent interpretation
+ * - Always returns a stable response shape
+ */
+
 import { Router } from "express";
 import multer from "multer";
 import { transcribeAudio } from "../services/stt.js";
@@ -8,54 +19,103 @@ import { config } from "../config.js";
 
 export const interpretRouter = Router();
 
+/* =====================
+   Multer configuration
+===================== */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: config.audio.maxSize }
 });
 
-interpretRouter.post("/interpret", upload.single("audio"), async (req, res) => {
-  let tempPath = null;
+/* =====================
+   POST /v0/interpret
+===================== */
+interpretRouter.post(
+  "/interpret",
+  upload.single("audio"),
+  async (req, res) => {
+    let tempPath = null;
 
-  try {
-    const { user_id, session_id, platform } = req.body;
-    const audio = req.file;
+    try {
+      const { user_id, session_id, platform } = req.body;
+      const audio = req.file;
 
-    if (!audio?.buffer) {
-      return res.json({ result: fallback("No audio received") });
-    }
+      console.log(
+        `[Interpret] user=${user_id?.slice(0, 6) ?? "anon"} platform=${platform}`
+      );
 
-    const sizeCheck = validateAudioSize(audio.buffer.length);
-    if (!sizeCheck.valid) {
-      return res.json({ result: fallback(sizeCheck.message) });
-    }
-
-    tempPath = await saveAudioToTemp(audio.buffer);
-
-    const transcript = await transcribeAudio(tempPath);
-    if (!transcript.trim()) {
-      return res.json({ result: fallback("No speech detected") });
-    }
-
-    const intent = await interpretIntent(transcript, { platform });
-
-    res.json({
-      result: {
-        transcript,
-        cleaned_intent: intent.cleaned_intent,
-        final_prompt: intent.final_prompt,
-        intent_type: intent.intent_type,
-        confidence: intent.confidence
+      /* ---------- Validate audio ---------- */
+      if (!audio || !audio.buffer) {
+        return res.json({ result: fallback("No audio received") });
       }
-    });
 
-  } catch (e) {
-    console.error("[Interpret] Error:", e.message);
-    res.json({ result: fallback("Processing failed") });
-  } finally {
-    if (tempPath) await cleanupTempFile(tempPath);
+      const sizeCheck = validateAudioSize(audio.buffer.length);
+      if (!sizeCheck.valid) {
+        return res.json({ result: fallback(sizeCheck.message) });
+      }
+
+      /* ---------- Save temp file ---------- */
+      tempPath = await saveAudioToTemp(audio.buffer);
+
+      /* ---------- Speech-to-text ---------- */
+      let transcript = "";
+      try {
+        transcript = await transcribeAudio(tempPath);
+      } catch (sttErr) {
+        console.error("[STT] Whisper error:", sttErr.message);
+        return res.json({
+          result: fallback("Speech transcription failed")
+        });
+      }
+
+      if (!transcript || transcript.trim().length === 0) {
+        return res.json({ result: fallback("No speech detected") });
+      }
+
+      /* ---------- Intent interpretation ---------- */
+      let interpretation;
+      try {
+        interpretation = await interpretIntent(transcript, { platform });
+      } catch (llmErr) {
+        console.error("[LLM] Intent error:", llmErr.message);
+        return res.json({
+          result: fallback("Intent interpretation failed")
+        });
+      }
+
+      /* ---------- Normalize output ---------- */
+      const result = {
+        transcript,
+        cleaned_intent:
+          interpretation.cleaned_intent || "Unable to interpret request",
+        final_prompt:
+          interpretation.final_prompt ||
+          interpretation.cleaned_intent ||
+          "Please clarify your request.",
+        intent_type: interpretation.intent_type || "clarification",
+        confidence:
+          typeof interpretation.confidence === "number"
+            ? interpretation.confidence
+            : 0.4
+      };
+
+      return res.json({ result });
+
+    } catch (err) {
+      console.error("[Interpret] Fatal error:", err.message);
+      return res.json({ result: fallback("Unexpected processing error") });
+
+    } finally {
+      if (tempPath) {
+        await cleanupTempFile(tempPath);
+      }
+    }
   }
-});
+);
 
+/* =====================
+   Fallback response
+===================== */
 function fallback(reason) {
   return {
     transcript: "",
